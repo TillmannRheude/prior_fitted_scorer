@@ -1,0 +1,10 @@
+modelname: gram
+
+emb_dim: 3072
+
+negative_sampling: n_squared
+candidate_dependent: true
+logit_scale_init: 0.0
+embedding_norm: true
+bias_init_mult: 1.0
+pair_num_negatives: 64

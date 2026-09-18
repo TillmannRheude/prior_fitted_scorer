@@ -1,0 +1,40 @@
+modelname: transformer
+
+emb_dim: 128
+
+negative_sampling: pair
+candidate_dependent: true
+logit_scale_init: 0.0
+embedding_norm: true
+bias_init_mult: 1.0
+
+transformer_params:
+  d_model: 128
+  nhead: 4
+  num_layers: 4
+  dropout: 0.1
+  num_register_tokens: 2
+  use_sigmoid_attention: false
+  use_sinusoidal_pe: false
+  disable_flash_mem_efficient_sdp: false
+  initialization: xavier  # xavier / kaiming / mimetic
+  freeze_attention: false
+  freeze_ffn: false
+  attention_replacement: standard  # standard / identity / uniform / fixed_cross_modal
+  mimetic_alpha1: 0.7
+  mimetic_beta1: 0.7
+  mimetic_alpha2: 0.4
+  mimetic_beta2: 0.4
+
+pair_num_negatives: 128
+scorer_lr: null
+scorer_warmup_start_epoch: 0
+scorer_warmup_epochs: 0
+scorer_warmup_curve: cosine  # cosine / linear / constant
+freeze_scorer: false
+compile_scorer: false
+compile_scorer_mode: default  # default / reduce-overhead / max-autotune
+
+pretrained_scorer_ckpt: null
+pretrained_scorer_strict: true
+pretrained_load_logit_scale: false

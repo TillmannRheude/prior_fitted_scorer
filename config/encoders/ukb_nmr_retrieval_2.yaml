@@ -1,0 +1,105 @@
+defaults:
+  - _self_
+
+monitor:
+  metric: "val/acc_top1"
+  mode: "max"
+
+
+# modalities to use for learning 
+modalities: ["nmr", "touchscreen", "bloodbio"]
+# candiate for retrieval from list "modalities"
+candidate_idx: 0
+
+nmr:
+  mlp:
+    hidden_dims: [1024, 512, 256]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+ehr:
+  mlp:
+    hidden_dims: [2048, 1024, 512]
+    hidden_dropouts: [0.6, 0.6, 0.6]
+olink:
+  mlp:
+    hidden_dims: [1024, 512, 256]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+prs:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+bloodbio:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+baselinechars:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+localenvironment:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+arterialstiffness:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+anthropometry:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+bloodpressure:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+ecgduringexercise:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+eyemeasures:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+bonedensitometry:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+handgripstrength:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+spirometry:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+touchscreen:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+cognitivefunction:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+hearingtest:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+verbalinterview:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+bloodcount:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+urineassays:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+telomeres:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]
+infectiousdiseases:
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.2, 0.2, 0.2]

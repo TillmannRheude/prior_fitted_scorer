@@ -1,0 +1,34 @@
+defaults:
+  - _self_
+
+monitor:
+  metric: "val/acc_top1"
+  mode: "max"
+
+modalities: ["vision", "ehr", "report"]
+candidate_idx: 0
+retrieval_mode: "preselected"
+preselected_num_candidates: 10
+same_label_negatives: true
+
+vision:
+  input_dim: 768
+  hidden_dim: 64
+  num_blocks: 1
+
+ehr:
+  input_dim: 769
+  branch_initialization: scaled_final
+  branch_scale: 1e-3
+  mlp:
+    hidden_dims: [512, 256, 128]
+    hidden_dropouts: [0.0, 0.0, 0.0]
+
+report:
+  text_model_id: "StanfordAIMI/RadBERT"
+  max_text_length: 256
+  proj_hidden_dim: 512
+  dropout: 0.0
+  lora: true
+  branch_initialization: scaled_final
+  branch_scale: 1e-3

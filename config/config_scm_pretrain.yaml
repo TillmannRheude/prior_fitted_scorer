@@ -1,0 +1,35 @@
+defaults:
+  - _self_
+  - datamodule: scm_pretrain
+  - encoders: scm
+  - modelname: transformer_scm
+
+dataset_name: scm_pretrain
+batch_size: 128
+split_nr: 0
+devices: 1
+
+optimizer:
+  name: schedulefree_adamw
+  lr: 3e-4
+  warmup_steps: 10
+  weight_decay: 1e-4
+  eps: 1e-7
+  betas: [0.9, 0.95]
+
+seed: 420
+
+precision: "bf16"
+max_epochs: 25
+limit_train_batches: 1.0
+patience: 5
+monitor: "val/min_loss"
+monitor_mode: "min"
+validate_retrieval: false
+
+wandb:
+  project: "contrastive_scm"
+  group: "scm_pretrain"
+
+ckpt_dir: "checkpoints"
+ckpt_name: null

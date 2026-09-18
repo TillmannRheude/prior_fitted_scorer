@@ -1,0 +1,26 @@
+defaults:
+  - _self_
+
+monitor:
+  metric: "val/acc_top1"
+  mode: "max"
+
+regularizer_params:
+  m: 0.5
+  M: 5.0
+  w_low: 10.0
+  w_high: 1.0
+  lam: 1.0
+
+
+input_layout: "1d"
+input_dim: 5
+candidate_idx: 1
+
+# Symile XOR dataset parameters
+n_samples: 16000
+p: 1.0
+value_mode: "zero_one"  # "zero_one" or "minus_plus"
+dim: 5
+signal_scale: 1.0
+distractor_std: 0.0

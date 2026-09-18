@@ -1,0 +1,79 @@
+monitor:
+  metric: "val/acc_top1"
+  mode: "max"
+
+n_modalities: 3
+type: identity  # identity / residual_adapter
+
+adapter_hidden_dim: 256
+adapter_dropout: 0.0
+adapter_residual_scale_init: 0.001
+adapter_use_layernorm: true
+
+# Always active SCM size / output interface.
+n_latents: 8
+latent_dim: 16
+embedding_dim: 128
+
+# Static values used when the corresponding sampling mode below is static.
+edge_probability: 0.3
+latent_noise_std: 0.2
+modality_noise_std: [0.4, 0.4, 0.4]
+modality_readout: linear  # linear / mlp
+modality_readout_alpha: 1.0  # used only with modality_readout=mlp
+modality_mlp_hidden_dim: null  # null => max(embedding_dim, 2 * latent_dim)
+# Independent parameter sampling. These choices are only used when
+# parameter_sampling_mode=sampled.
+parameter_sampling_mode: static  # static / sampled
+n_latents_choices: [32]
+latent_dim_choices: [16]
+modality_noise_std_choices: [0.3]
+modality_readout_alpha_choices: [0.2, 0.5, 0.8]
+edge_probability_choices: [0.3, 0.4]
+
+# bernoulli: independent edges via modality_connection_probability
+# structured: allocate latents to shared_all / pairwise / private roles
+# semantic_children: unobserved semantic roots cause modality-specific children;
+#   modalities observe their own child latents plus private latents.
+modality_mask_mode: structured
+modality_connection_probability: 0.5  # used only for bernoulli mode
+shared_all_mode: null  # null / semantic_anchor; used only for structured mode
+pairwise_mode: null  # null / semantic_anchor; used only for structured mode
+semantic_root_fraction: 0.125  # used only for semantic_children mode
+
+# Fractions of n_latents (sum <= 1; remainder unused). Or integer counts
+# (sum > 1 or include unused). Fine-grained: ab/ac/bc, a/b/c.
+# modality_allocation_choices are only used when modality_allocation_mode=sampled.
+modality_allocation_mode: static  # static / sampled
+modality_allocation_choices:
+  - shared_all: 0.25
+    pairwise: 0.375
+    private: 0.375
+  - shared_all: 0.1
+    pairwise: 0.45
+    private: 0.45
+modality_allocation:
+  shared_all: 0.25
+  pairwise: 0.375
+  private: 0.375
+modality_allocation_preset: null
+
+# Mechanism choices are only used when mechanism_types_mode=sampled. Otherwise
+# mechanism_types is used as the static allowed set.
+mechanism_types_mode: static  # static / sampled
+mechanism_type_choices:
+  - [linear]
+  - [linear, tanh, sine]
+  - [linear, relu, gelu]
+  - [tanh, sine, gelu]
+  - [relu, gelu, mlp]
+mechanism_types:
+  - linear
+  - tanh
+  - sine
+  - relu
+  - gelu
+  - mlp
+  - multiplicative
+shared_modality_projections: true
+shared_projection_seed: null
