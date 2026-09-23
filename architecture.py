@@ -423,6 +423,9 @@ class TransformerScorer(nn.Module):
         self.input_dim = input_dim
         self.d_model = int(d_model)
         self.use_sinusoidal_pe = use_sinusoidal_pe
+        self.use_final_cls_norm = bool(
+            transformer_params.get("use_final_cls_norm", False)
+        )
 
         self.input_projs = nn.ModuleList([
             nn.Sequential(
@@ -500,6 +503,9 @@ class TransformerScorer(nn.Module):
                     _fixed_attention_fastpath_guard
                 )
 
+        self.final_cls_norm = (
+            nn.LayerNorm(d_model) if self.use_final_cls_norm else nn.Identity()
+        )
         self.proj_head = nn.Linear(d_model, proj_output_dim)
 
         self.apply(self._init_weights)
@@ -672,6 +678,7 @@ class TransformerScorer(nn.Module):
         cls_out = transformer_output[:, 0, :]  # [B, D]
         modality_out = transformer_output[:, 1 : 1 + n_modality_tokens, :]  # [B, M, D]
         flat_features = torch.flatten(modality_out, start_dim=1)  # [B, M*D]
+        cls_out = self.final_cls_norm(cls_out)
         z = self.proj_head(cls_out)
         if return_features:
             return {

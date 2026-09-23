@@ -16,6 +16,7 @@ transformer_params:
   num_register_tokens: 2
   use_sigmoid_attention: false
   use_sinusoidal_pe: false
+  use_final_cls_norm: false
   disable_flash_mem_efficient_sdp: false
   initialization: xavier  # xavier / kaiming / mimetic
   freeze_attention: false
