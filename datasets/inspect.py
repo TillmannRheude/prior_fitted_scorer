@@ -13,9 +13,7 @@ from transformers import AutoTokenizer
 class INSPECTDataset(Dataset):
     """Aligned INSPECT vision, EHR, and radiology-report triples."""
 
-    DEFAULT_DATA_DIR = Path(
-        "/sc-projects/sc-proj-ukb-cvd/projects/data/inspect"
-    )
+    DEFAULT_DATA_DIR = Path("data/inspect")
 
     def __init__(
         self,

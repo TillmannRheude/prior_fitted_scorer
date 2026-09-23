@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 
 
 class Dataset_SymileMimic(Dataset):
-    DEFAULT_DATA_DIR = "/sc-resources/dh-mimic/mimic_symile/original_data_and_splits/"
+    DEFAULT_DATA_DIR = "data/mimic-symile"
 
     def __init__(
         self,

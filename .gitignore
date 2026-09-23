@@ -25,7 +25,6 @@ analyses.ipynb
 visualization/
 
 config/datamodule
-
-scripts
-sweeps
+scripts 
+sweeps 
 test_ckpt

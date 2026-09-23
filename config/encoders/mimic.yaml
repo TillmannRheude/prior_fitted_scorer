@@ -8,10 +8,10 @@ candidate_idx: 0
 retrieval_mode: "preselected"
 preselected_num_candidates: 10
 
-mimic_root: "/sc-resources/dh-mimic/mimic_iv_2_2"
-train_split_csv: "/sc-resources/dh-mimic/mimic_iv_2_2/contrastive_learning/data/folds/fold_0/train.csv"
-val_split_csv: "/sc-resources/dh-mimic/mimic_iv_2_2/contrastive_learning/data/folds/fold_0/val.csv"
-test_split_csv: "/sc-resources/dh-mimic/mimic_iv_2_2/contrastive_learning/data/folds/fold_0/test.csv"
+mimic_root: ${oc.env:MIMIC_IV_DATA_DIR,data/mimic-iv}
+train_split_csv: ${oc.env:MIMIC_IV_DATA_DIR,data/mimic-iv}/contrastive_learning/data/folds/fold_0/train.csv
+val_split_csv: ${oc.env:MIMIC_IV_DATA_DIR,data/mimic-iv}/contrastive_learning/data/folds/fold_0/val.csv
+test_split_csv: ${oc.env:MIMIC_IV_DATA_DIR,data/mimic-iv}/contrastive_learning/data/folds/fold_0/test.csv
 
 load_radiology_text: true
 require_all_modalities: false
