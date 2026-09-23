@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from contextlib import contextmanager
-
-from utils import sinusoidal_positional_encoding
 
 
 def mimetic_init_svd_(
@@ -93,220 +90,6 @@ def mimetic_init_svd_(
             nn.init.zeros_(module.out_proj.bias)
 
 
-class FixedPatternMultiheadAttention(nn.MultiheadAttention):
-    """Multi-head value projection with a fixed, content-independent pattern."""
-
-    VALID_PATTERNS = {"identity", "uniform", "fixed_cross_modal"}
-
-    def __init__(
-        self,
-        *args,
-        attention_pattern: str,
-        token_groups: list[int],
-        **kwargs,
-    ):
-        super().__init__(*args, **kwargs)
-        pattern = str(attention_pattern).lower()
-        if pattern not in self.VALID_PATTERNS:
-            raise ValueError(
-                f"Unsupported fixed attention pattern {pattern!r}; "
-                f"expected one of {sorted(self.VALID_PATTERNS)}."
-            )
-        self.attention_pattern = pattern
-        self.token_groups = tuple(int(group) for group in token_groups)
-
-    def _base_allowed_mask(
-        self,
-        query_length: int,
-        key_length: int,
-        device: torch.device,
-    ) -> torch.Tensor:
-        if query_length != len(self.token_groups):
-            raise ValueError(
-                f"Fixed attention expected {len(self.token_groups)} tokens, "
-                f"got query length {query_length}."
-            )
-        if key_length != len(self.token_groups):
-            raise ValueError(
-                f"Fixed attention expected {len(self.token_groups)} tokens, "
-                f"got key length {key_length}."
-            )
-
-        if self.attention_pattern == "identity":
-            return torch.eye(
-                query_length,
-                key_length,
-                dtype=torch.bool,
-                device=device,
-            )
-        if self.attention_pattern == "uniform":
-            return torch.ones(
-                query_length,
-                key_length,
-                dtype=torch.bool,
-                device=device,
-            )
-
-        groups = torch.tensor(self.token_groups, device=device)
-        query_groups = groups[:, None]
-        key_groups = groups[None, :]
-        cls_edges = (query_groups == -1) | (key_groups == -1)
-        register_edges = (query_groups == -2) | (key_groups == -2)
-        cross_modality_edges = (
-            (query_groups >= 0)
-            & (key_groups >= 0)
-            & (query_groups != key_groups)
-        )
-        return cls_edges | register_edges | cross_modality_edges
-
-    @staticmethod
-    def _blocked_from_mask(
-        mask: torch.Tensor,
-        *,
-        batch_size: int,
-        num_heads: int,
-        query_length: int,
-        key_length: int,
-    ) -> torch.Tensor:
-        if mask.dtype == torch.bool:
-            blocked = mask
-        else:
-            blocked = torch.isneginf(mask) | (mask < -1e4)
-
-        if blocked.ndim == 2:
-            blocked = blocked[None, None, :, :]
-        elif blocked.ndim == 3:
-            if blocked.shape[0] == batch_size * num_heads:
-                blocked = blocked.reshape(
-                    batch_size,
-                    num_heads,
-                    query_length,
-                    key_length,
-                )
-            elif blocked.shape[0] == batch_size:
-                blocked = blocked[:, None, :, :]
-            else:
-                raise ValueError(
-                    f"Unsupported fixed-attention mask shape {tuple(mask.shape)}."
-                )
-        elif blocked.ndim != 4:
-            raise ValueError(
-                f"Unsupported fixed-attention mask shape {tuple(mask.shape)}."
-            )
-        return blocked
-
-    def forward(
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        key_padding_mask: torch.Tensor = None,
-        need_weights: bool = True,
-        attn_mask: torch.Tensor = None,
-        average_attn_weights: bool = True,
-        is_causal: bool = False,
-    ):
-        if self.batch_first:
-            query_bf, key_bf, value_bf = query, key, value
-        else:
-            query_bf = query.transpose(0, 1)
-            key_bf = key.transpose(0, 1)
-            value_bf = value.transpose(0, 1)
-
-        batch_size, query_length, _ = query_bf.shape
-        key_length = key_bf.shape[1]
-        if key_bf.shape != value_bf.shape:
-            raise ValueError("Fixed attention requires matching key/value shapes.")
-
-        value_weight = self.in_proj_weight[2 * self.embed_dim :]
-        value_bias = (
-            None
-            if self.in_proj_bias is None
-            else self.in_proj_bias[2 * self.embed_dim :]
-        )
-        projected_value = F.linear(value_bf, value_weight, value_bias)
-        projected_value = (
-            projected_value.reshape(
-                batch_size,
-                key_length,
-                self.num_heads,
-                self.head_dim,
-            )
-            .transpose(1, 2)
-        )
-
-        allowed = self._base_allowed_mask(
-            query_length,
-            key_length,
-            query_bf.device,
-        )
-        allowed = allowed[None, None, :, :].expand(
-            batch_size,
-            self.num_heads,
-            -1,
-            -1,
-        )
-
-        if attn_mask is not None:
-            blocked = self._blocked_from_mask(
-                attn_mask,
-                batch_size=batch_size,
-                num_heads=self.num_heads,
-                query_length=query_length,
-                key_length=key_length,
-            )
-            allowed = allowed & ~blocked
-
-        if is_causal:
-            causal_blocked = torch.ones(
-                query_length,
-                key_length,
-                dtype=torch.bool,
-                device=query_bf.device,
-            ).triu(diagonal=1)
-            allowed = allowed & ~causal_blocked[None, None, :, :]
-
-        if key_padding_mask is not None:
-            if key_padding_mask.dtype == torch.bool:
-                key_blocked = key_padding_mask
-            else:
-                key_blocked = torch.isneginf(key_padding_mask) | (
-                    key_padding_mask < -1e4
-                )
-            key_blocked = key_blocked.to(device=query_bf.device)
-            allowed = allowed & ~key_blocked[:, None, None, :]
-
-        attention_weights = allowed.to(dtype=projected_value.dtype)
-        denominator = attention_weights.sum(dim=-1, keepdim=True)
-        attention_weights = attention_weights / denominator.clamp_min(1.0)
-        attention_weights = F.dropout(
-            attention_weights,
-            p=self.dropout,
-            training=self.training,
-        )
-
-        attention_output = attention_weights @ projected_value
-        attention_output = (
-            attention_output.transpose(1, 2)
-            .reshape(batch_size, query_length, self.embed_dim)
-        )
-        attention_output = self.out_proj(attention_output)
-        if not self.batch_first:
-            attention_output = attention_output.transpose(0, 1)
-
-        if not need_weights:
-            return attention_output, None
-        if average_attn_weights:
-            returned_weights = attention_weights.mean(dim=1)
-        else:
-            returned_weights = attention_weights
-        return attention_output, returned_weights
-
-
-def _fixed_attention_fastpath_guard(module, inputs):
-    """A no-op hook that keeps TransformerEncoderLayer on its Python path."""
-    return None
-
 
 @contextmanager
 def _maybe_disable_flash_mem_efficient_sdp(disable: bool):
@@ -364,18 +147,13 @@ class TransformerScorer(nn.Module):
         },
         proj_output_dim: int = 1,
         max_modalities: int = 3,
-        seq_dims: list[int] = [1, 1, 1],
-        num_register_tokens: int = 0,
-        use_mask_tokens: bool = False,
         candidate_dependent: bool = True,
         input_dim: int = None,
     ):
         super().__init__()
         d_model = transformer_params["d_model"]
-        use_sigmoid_attention = bool(transformer_params.get("use_sigmoid_attention", False))
-        use_sinusoidal_pe = bool(transformer_params.get("use_sinusoidal_pe", False))
         self.initialization = str(
-            transformer_params.get("initialization", "xavier")
+            transformer_params["initialization"]
         ).lower()
         valid_initializations = {"xavier", "kaiming", "mimetic"}
         if self.initialization not in valid_initializations:
@@ -383,50 +161,14 @@ class TransformerScorer(nn.Module):
                 f"Unsupported transformer initialization {self.initialization!r}; "
                 f"expected one of {sorted(valid_initializations)}."
             )
-        self.attention_replacement = str(
-            transformer_params.get("attention_replacement", "standard")
-        ).lower()
-        valid_attention_replacements = {
-            "standard",
-            *FixedPatternMultiheadAttention.VALID_PATTERNS,
-        }
-        if self.attention_replacement not in valid_attention_replacements:
-            raise ValueError(
-                f"Unsupported attention replacement "
-                f"{self.attention_replacement!r}; expected one of "
-                f"{sorted(valid_attention_replacements)}."
-            )
-        if use_sigmoid_attention and self.attention_replacement != "standard":
-            raise ValueError(
-                "Fixed attention replacements cannot be combined with "
-                "use_sigmoid_attention=True."
-            )
-        if use_sigmoid_attention and self.initialization == "mimetic":
-            raise ValueError(
-                "Mimetic initialization currently requires standard "
-                "nn.MultiheadAttention."
-            )
-        self.freeze_attention = bool(
-            transformer_params.get("freeze_attention", False)
-        )
-        self.freeze_ffn = bool(transformer_params.get("freeze_ffn", False))
         self.disable_flash_mem_efficient_sdp = bool(
-            transformer_params.get("disable_flash_mem_efficient_sdp", False)
+            transformer_params["disable_flash_mem_efficient_sdp"]
         )
-        num_register_tokens = int(transformer_params.get("num_register_tokens", num_register_tokens))
         input_dim = d_model if input_dim is None else int(input_dim)
         self.max_modalities = int(max_modalities)
-        self.seq_dims = list(seq_dims)
-        self.num_register_tokens = int(num_register_tokens)
-        self.use_mask_tokens = bool(use_mask_tokens)
         self.candidate_dependent = bool(candidate_dependent)
         self.input_dim = input_dim
         self.d_model = int(d_model)
-        self.use_sinusoidal_pe = use_sinusoidal_pe
-        self.use_final_cls_norm = bool(
-            transformer_params.get("use_final_cls_norm", False)
-        )
-
         self.input_projs = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(input_dim, d_model),
@@ -436,76 +178,22 @@ class TransformerScorer(nn.Module):
             for _ in range(self.max_modalities)
         ])
 
-        if self.use_mask_tokens:
-            self.mask_tokens = nn.ParameterList([
-                nn.Parameter(torch.zeros(1, 1, d_model)) for _ in range(self.max_modalities)
-            ])
-        else:
-            self.mask_tokens = None
-        
-        # Learnable CLS token (prepended); score is a linear readout of CLS.
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
 
-        if self.num_register_tokens > 0:
-            self.register_tokens = nn.Parameter(torch.zeros(1, self.num_register_tokens, d_model))
-        else:
-            self.register_tokens = None
-
-        if self.use_sinusoidal_pe:
-            # [CLS] + modality tokens + optional registers
-            total_tokens = 1 + int(sum(self.seq_dims)) + int(self.num_register_tokens)
-            pe = sinusoidal_positional_encoding(seq_len=total_tokens, d_model=d_model)
-            self.register_buffer("pos_encoding", pe, persistent=False)
-        else:
-            self.pos_encoding = None
-
-        if not use_sigmoid_attention:
-            encoder_layer = nn.TransformerEncoderLayer(
-                d_model=d_model,
-                nhead=transformer_params["nhead"],
-                dim_feedforward=d_model,
-                dropout=transformer_params["dropout"],
-                batch_first=True,
-                norm_first=True,
-                activation="gelu"
-            )
-        else:
-            from utils import SigmoidTransformerEncoderLayer
-            encoder_layer = SigmoidTransformerEncoderLayer(
-                d_model=d_model,
-                nhead=transformer_params["nhead"],
-                dim_feedforward=d_model,
-                dropout=transformer_params["dropout"],
-                batch_first=True,
-                norm_first=True,
-                activation="gelu",
-            )
-        if self.attention_replacement != "standard":
-            token_groups = [-1]
-            for modality, seq_dim in enumerate(self.seq_dims):
-                token_groups.extend([modality] * int(seq_dim))
-            token_groups.extend([-2] * self.num_register_tokens)
-            encoder_layer.self_attn = FixedPatternMultiheadAttention(
-                embed_dim=d_model,
-                num_heads=transformer_params["nhead"],
-                dropout=transformer_params["dropout"],
-                batch_first=True,
-                attention_pattern=self.attention_replacement,
-                token_groups=token_groups,
-            )
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=transformer_params["nhead"],
+            dim_feedforward=d_model,
+            dropout=transformer_params["dropout"],
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+        )
         self.transformer = nn.TransformerEncoder(
             encoder_layer,
             num_layers=transformer_params["num_layers"],
         )
-        if self.attention_replacement != "standard":
-            for layer in self.transformer.layers:
-                layer.self_attn.register_forward_pre_hook(
-                    _fixed_attention_fastpath_guard
-                )
 
-        self.final_cls_norm = (
-            nn.LayerNorm(d_model) if self.use_final_cls_norm else nn.Identity()
-        )
         self.proj_head = nn.Linear(d_model, proj_output_dim)
 
         self.apply(self._init_weights)
@@ -514,21 +202,15 @@ class TransformerScorer(nn.Module):
                 self._init_attention_projection(module)
         if self.initialization == "mimetic":
             mimetic_kwargs = {
-                "alpha1": float(transformer_params.get("mimetic_alpha1", 0.7)),
-                "beta1": float(transformer_params.get("mimetic_beta1", 0.7)),
-                "alpha2": float(transformer_params.get("mimetic_alpha2", 0.4)),
-                "beta2": float(transformer_params.get("mimetic_beta2", 0.4)),
+                "alpha1": float(transformer_params["mimetic_alpha1"]),
+                "beta1": float(transformer_params["mimetic_beta1"]),
+                "alpha2": float(transformer_params["mimetic_alpha2"]),
+                "beta2": float(transformer_params["mimetic_beta2"]),
             }
             for module in self.modules():
                 mimetic_init_svd_(module, **mimetic_kwargs)
 
         nn.init.normal_(self.cls_token, mean=0.0, std=0.02)
-        if self.num_register_tokens > 0:
-            nn.init.normal_(self.register_tokens, mean=0.0, std=0.02)
-        if self.mask_tokens is not None:
-            for param in self.mask_tokens:
-                nn.init.normal_(param, mean=0.0, std=0.02)
-        self._apply_component_freezing()
 
     def _init_weights(self, m) -> None:
         if isinstance(m, nn.LayerNorm):
@@ -568,26 +250,15 @@ class TransformerScorer(nn.Module):
         if module.in_proj_bias is not None:
             nn.init.zeros_(module.in_proj_bias)
 
-    def _apply_component_freezing(self) -> None:
-        for layer in self.transformer.layers:
-            if self.freeze_attention:
-                for parameter in layer.self_attn.parameters():
-                    parameter.requires_grad_(False)
-            if self.freeze_ffn:
-                for module in (layer.linear1, layer.linear2):
-                    for parameter in module.parameters():
-                        parameter.requires_grad_(False)
-
     def forward(
         self,
         embeddings: list[torch.Tensor],
-        source_mask: torch.Tensor = None,
         src_key_padding_mask: torch.Tensor = None,
         return_features: bool = False,
     ):
         embeddings = [
             embedding[:, None, :] if embedding.ndim == 2 else embedding for embedding in embeddings
-        ]  # [B, 1, D]
+        ]
 
         batch_size = embeddings[0].shape[0]
         if src_key_padding_mask is not None:
@@ -602,34 +273,18 @@ class TransformerScorer(nn.Module):
                 dtype=torch.bool,
             )
 
-        if source_mask is not None:
-            if not self.use_mask_tokens or self.mask_tokens is None:
-                raise ValueError("source_mask was provided, but use_mask_tokens is disabled for TransformerScorer.")
-            if source_mask.shape != (embeddings[0].shape[0], self.max_modalities):
-                raise ValueError(
-                    f"Expected source_mask shape {(embeddings[0].shape[0], self.max_modalities)}, got {tuple(source_mask.shape)}"
-                )
-            source_mask = source_mask.to(device=embeddings[0].device, dtype=torch.bool)
-
         modality_tokens = []
         for m, embedding in enumerate(embeddings):
             if embedding.shape[-1] != self.input_dim:
                 raise ValueError(
                     f"Expected modality {m} embedding dim {self.input_dim}, got {embedding.shape[-1]}."
                 )
-            tok = self.input_projs[m](embedding)
-            if source_mask is not None:
-                missing = source_mask[:, m]
-                if missing.any():
-                    mask_tok = self.mask_tokens[m].expand(tok.shape[0], tok.shape[1], -1)
-                    missing_view = missing[:, None, None]
-                    tok = torch.where(missing_view, mask_tok, tok)
-            modality_tokens.append(tok)
+            modality_tokens.append(self.input_projs[m](embedding))
 
-        modality = torch.cat(modality_tokens, dim=1)  # [B, sum(T_m), D]
+        modality = torch.cat(modality_tokens, dim=1)
         n_modality_tokens = modality.shape[1]
         cls = self.cls_token.expand(modality.shape[0], -1, -1)
-        tokens = torch.cat([cls, modality], dim=1)  # [B, 1 + sum(T_m), D]
+        tokens = torch.cat([cls, modality], dim=1)
 
         token_padding_mask = None
         if src_key_padding_mask is not None:
@@ -647,38 +302,15 @@ class TransformerScorer(nn.Module):
             )
             token_padding_mask = torch.cat([cls_padding, modality_padding], dim=1)
 
-        # Optional registers at the end (not used for scoring).
-        if self.num_register_tokens > 0:
-            reg = self.register_tokens.expand(tokens.shape[0], -1, -1)
-            tokens = torch.cat([tokens, reg], dim=1)
-            if token_padding_mask is not None:
-                register_padding = torch.zeros(
-                    (batch_size, self.num_register_tokens),
-                    device=tokens.device,
-                    dtype=torch.bool,
-                )
-                token_padding_mask = torch.cat(
-                    [token_padding_mask, register_padding],
-                    dim=1,
-                )
-
-        if self.pos_encoding is not None:
-            if self.pos_encoding.shape[1] != tokens.shape[1]:
-                raise ValueError(
-                    f"Positional encoding length ({self.pos_encoding.shape[1]}) does not match token length ({tokens.shape[1]})."
-                )
-            tokens = tokens + self.pos_encoding.to(device=tokens.device, dtype=tokens.dtype)
-
         with _maybe_disable_flash_mem_efficient_sdp(self.disable_flash_mem_efficient_sdp):
             transformer_output = self.transformer(
                 tokens,
                 src_key_padding_mask=token_padding_mask,
-            )  # [B, 1 + M (+ R), D]
+            )
 
-        cls_out = transformer_output[:, 0, :]  # [B, D]
-        modality_out = transformer_output[:, 1 : 1 + n_modality_tokens, :]  # [B, M, D]
-        flat_features = torch.flatten(modality_out, start_dim=1)  # [B, M*D]
-        cls_out = self.final_cls_norm(cls_out)
+        cls_out = transformer_output[:, 0, :]
+        modality_out = transformer_output[:, 1 : 1 + n_modality_tokens, :]
+        flat_features = torch.flatten(modality_out, start_dim=1)
         z = self.proj_head(cls_out)
         if return_features:
             return {
@@ -699,7 +331,6 @@ class TransformerScorer_Model(nn.Module):
             "num_layers": 2,
         },
         proj_output_dim: int = 1,
-        seq_dims: list[int] = [1, 1, 1],
         candidate_dependent: bool = True,
     ):
         super().__init__()
@@ -718,7 +349,6 @@ class TransformerScorer_Model(nn.Module):
         self.transformer = TransformerScorer(
             transformer_params=transformer_params,
             proj_output_dim=proj_output_dim,
-            seq_dims=seq_dims,
             candidate_dependent=candidate_dependent,
             input_dim=encoder_output_dim,
         )
@@ -727,13 +357,11 @@ class TransformerScorer_Model(nn.Module):
     def forward(
         self,
         x: list = [torch.Tensor, torch.Tensor, torch.Tensor],
-        source_mask: torch.Tensor = None,
         src_key_padding_mask: torch.Tensor = None,
     ):
         embeddings = self.contrastive_model(x)["embeddings"]
         transformer_output = self.transformer(
             embeddings,
-            source_mask=source_mask,
             src_key_padding_mask=src_key_padding_mask,
             return_features=True,
         )
@@ -840,7 +468,6 @@ class MLPScorer(nn.Module):
     def forward(
         self,
         embeddings: list[torch.Tensor],
-        source_mask: torch.Tensor = None,
         src_key_padding_mask: torch.Tensor = None,
         return_features: bool = False,
     ):
@@ -849,14 +476,6 @@ class MLPScorer(nn.Module):
                 f"MLPScorer expected {self.max_modalities} modalities, "
                 f"got {len(embeddings)}."
             )
-        if source_mask is not None:
-            if src_key_padding_mask is not None:
-                raise ValueError(
-                    "Provide only one of source_mask or src_key_padding_mask "
-                    "to MLPScorer."
-                )
-            src_key_padding_mask = source_mask
-
         pooled_embeddings = []
         batch_size = embeddings[0].shape[0]
         for modality, embedding in enumerate(embeddings):
@@ -961,13 +580,11 @@ class MLPScorer_Model(nn.Module):
     def forward(
         self,
         x: list[torch.Tensor],
-        source_mask: torch.Tensor = None,
         src_key_padding_mask: torch.Tensor = None,
     ):
         embeddings = self.contrastive_model(x)["embeddings"]
         scorer_output = self.scorer(
             embeddings,
-            source_mask=source_mask,
             src_key_padding_mask=src_key_padding_mask,
             return_features=True,
         )

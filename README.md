@@ -1,23 +1,18 @@
-# Prior Fitted and Frozen Scorers
+# Prior-Fitted and Frozen Scorers for Multimodal Contrastive Learning
 
 [![arXiv](https://img.shields.io/badge/arXiv-xxx-b31b1b.svg)](https://arxiv.org/pdf/xxx)
 
-## Abstract
-<div align="justify">
-Contrastive learning is increasingly moving toward settings with three or more modalities instead of image-text pairs. Yet, extending models from pairwise to higher-order multimodal alignment can introduce optimization and representation challenges. We identify encoder Jacobian conditioning as a key factor in trimodal contrastive learning: poorly conditioned encoders exhibit collapsing or amplified singular-value spectra, leading to exploding Jacobian condition numbers and degraded multimodal alignment. We introduce geometry-preserving encoders (GPEs) by directly conditioning the Jacobian through regularization and demonstrating that simple modifications like LeakyReLU activations and residual paths recover these geometric benefits. Across a synthetic benchmark and four real-world datasets including missing modalities, improving Jacobian conditioning boosts retrieval and linear probe performance across multiple contrastive objectives, whereas expressive objectives yield little benefit in linear probes. More broadly, our results show that multimodal contrastive learning depends not only on objective expressivity, but also on the geometric and optimization properties of the underlying encoders.
-</div>
-
-## Implement a PFS or Frozen Scorer
+Multimodal contrastive learning typically relies on manually specified scoring functions, such as cosine similarity, to quantify the similarity between representations from different modalities. Several such functions have been recently proposed to extend contrastive learning beyond two modalities. In principle, however, any function that assigns high compatibility to matched samples and low compatibility to mismatched ones could serve as a scorer. Motivated by this broader view, we instantiate the scorer with a Transformer and find that even a randomly initialized model, when kept frozen, can outperform strong handcrafted multimodal contrastive baselines, whereas optimizing the scorer jointly with the encoders is less effective. Building on this observation, we introduce the Prior-Fitted Scorer (PFS): a Transformer scorer pre-trained on synthetic multimodal data generated from structural causal model (SCM) priors before transferring it to real-world data. The SCM exposes the scorer to diverse dependency structures, including shared, pairwise, and private information, providing a structured prior over higher-order cross-modal similarity. Across four real-world datasets, frozen Transformer scorers are competitive to contrastive baselines, and prior-fitting further improves the random initialization. More broadly, our results suggest that multimodal contrastive learning need not rely on manual similarity functions: Transformers can provide strong inductive biases, while causal pretraining can further shape these biases.
 
 ## Citation
-In case you find our work helpful, we're happy if you cite us as following
+If you find this work useful, please cite:
+
 ```bibtex
-@unpublished{Rheude_Hegselmann_Eils_Wild_2025, 
-      title={Prior-Fitted and Frozen Scorers for Multimodal Contrastive Learning}, 
-      author={Tillmann Rheude and Roland Eils and Benjamin Wild},
-      year={2026},
-      eprint={},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={}, 
+@unpublished{Rheude_Eils_Wild_2026,
+  title={Prior-Fitted and Frozen Scorers for Multimodal Contrastive Learning},
+  author={Tillmann Rheude and Roland Eils and Benjamin Wild},
+  year={2026},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG}
 }
+```

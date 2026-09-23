@@ -1,7 +1,6 @@
 import torch.nn as nn
 import torch
 import pickle
-from torchvision import models
 
 def _as_bool(value) -> bool:
     if isinstance(value, str):
@@ -27,64 +26,6 @@ def _init_linear_near_identity_(layer: nn.Linear, noise_scale: float = 1e-3) -> 
             layer.weight.add_(noise_scale * torch.randn_like(layer.weight))
         if layer.bias is not None:
             layer.bias.zero_()
-
-
-def _resnet_basic_forward_no_skip(self, x):
-    out = self.conv1(x)
-    out = self.bn1(out)
-    out = self.relu(out)
-    out = self.conv2(out)
-    out = self.bn2(out)
-    if self.downsample is not None:
-        out = out + (0.0 * self.downsample(x))
-    out = self.relu(out)
-    return out
-
-
-def _resnet_bottleneck_forward_no_skip(self, x):
-    out = self.conv1(x)
-    out = self.bn1(out)
-    out = self.relu(out)
-    out = self.conv2(out)
-    out = self.bn2(out)
-    out = self.relu(out)
-    out = self.conv3(out)
-    out = self.bn3(out)
-    if self.downsample is not None:
-        out = out + (0.0 * self.downsample(x))
-    out = self.relu(out)
-    return out
-
-
-class NoSkipBasicBlock(models.resnet.BasicBlock):
-    def forward(self, x):
-        return _resnet_basic_forward_no_skip(self, x)
-
-
-class NoSkipBottleneck(models.resnet.Bottleneck):
-    def forward(self, x):
-        return _resnet_bottleneck_forward_no_skip(self, x)
-
-
-def _disable_resnet_skip_connections_(model: nn.Module) -> None:
-    """
-    Convert torchvision ResNet BasicBlock/Bottleneck modules into plain stacked
-    conv blocks by removing their residual addition. Downsample branches are
-    ignored in this ablation; the block output is the transformed path only.
-    """
-    for module in model.modules():
-        if isinstance(module, models.resnet.BasicBlock):
-            module.__class__ = NoSkipBasicBlock
-        elif isinstance(module, models.resnet.Bottleneck):
-            module.__class__ = NoSkipBottleneck
-
-
-# Backward-compatible aliases for checkpoints written by the earlier
-# instance-level monkey patch.
-models.resnet.BasicBlock._resnet_basic_forward_no_skip = _resnet_basic_forward_no_skip
-models.resnet.Bottleneck._resnet_bottleneck_forward_no_skip = _resnet_bottleneck_forward_no_skip
-models.resnet.BasicBlock._basic_forward = _resnet_basic_forward_no_skip
-models.resnet.Bottleneck._bottleneck_forward = _resnet_bottleneck_forward_no_skip
 
 
 def _load_torch_checkpoint(path: str) -> dict:
@@ -214,55 +155,25 @@ def _maybe_freeze_scorer(lightning_module, cfg: dict):
     return lightning_module
 
 
-def _maybe_compile_scorer(lightning_module, cfg: dict):
-    """Compile the learned scorer when modelname.compile_scorer=true."""
-    if not _as_bool(cfg.get("modelname", {}).get("compile_scorer", False)):
-        return lightning_module
-
-    if cfg["modelname"]["modelname"] not in {"transformer", "mlp"}:
-        raise ValueError(
-            "compile_scorer=True requires modelname='transformer' or 'mlp'."
-        )
-
-    scorer = _get_scorer(lightning_module)
-    if scorer is None:
-        raise ValueError("compile_scorer=True, but no learned scorer was found.")
-
-    mode = str(cfg["modelname"].get("compile_scorer_mode", "default"))
-    allowed_modes = {"default", "reduce-overhead", "max-autotune"}
-    if mode not in allowed_modes:
-        raise ValueError(
-            f"Unsupported compile_scorer_mode={mode!r}. Expected one of {sorted(allowed_modes)}."
-        )
-
-    if hasattr(lightning_module.model, "scorer"):
-        lightning_module.model.scorer = torch.compile(scorer, mode=mode)
-    else:
-        lightning_module.model.transformer = torch.compile(scorer, mode=mode)
-    print(f"Compiled learned scorer with torch.compile(mode={mode!r}).")
-    return lightning_module
-
-
 def _finalize_learned_scorer(lightning_module, cfg: dict):
-    """Load optional pretrained scorer weights, then optionally freeze and compile."""
     lightning_module = _maybe_load_pretrained_scorer(lightning_module, cfg)
-    lightning_module = _maybe_freeze_scorer(lightning_module, cfg)
-    return _maybe_compile_scorer(lightning_module, cfg)
+    return _maybe_freeze_scorer(lightning_module, cfg)
 
 
 def build_model(cfg: dict):
     from architecture import Contrastive_Model, MLPScorer_Model, TransformerScorer_Model
     from encoders import (
-        CXREncoder, ECGEncoder, LabsEncoder,  # symile_mimic
-        UKBTabularEncoder, # ukb
-        SyntheticXNOREncoder,  # synthetic_xnor
-        MimicRadBERTEncoder, MimicMLPEncoder, InspectVisionEncoder, # mimic / inspect
-        IdentityEncoder, ResidualAdapterEncoder, # scm_pretrain
+        CXREncoder,
+        ECGEncoder,
+        IdentityEncoder,
+        InspectVisionEncoder,
+        LabsEncoder,
+        MimicMLPEncoder,
+        MimicRadBERTEncoder,
+        UKBTabularEncoder,
     )
     from lightningmodules.symile_mimic import SymileMIMICModel
     from lightningmodules.ukb import UKBModel
-    from lightningmodules.synthetic_xnor import SyntheticXNORModel
-    from lightningmodules.symile_xor import SymileXORModel
     from lightningmodules.mimic import MIMICModel
     from lightningmodules.scm import SCMPretrainModel
     from lightningmodules.inspect import INSPECTModel
@@ -317,7 +228,6 @@ def build_model(cfg: dict):
                 contrastive_model=contrastive_model,
                 transformer_params=cfg["modelname"]["transformer_params"],
                 proj_output_dim=1,
-                seq_dims=[1 for _ in range(max_modalities)],
                 candidate_dependent=cfg["modelname"].get(
                     "candidate_dependent", True
                 ),
@@ -345,28 +255,9 @@ def build_model(cfg: dict):
                 f"because IdentityEncoder forwards SCM embeddings directly. Got {embedding_dim} and {model_emb_dim}."
             )
 
-        encoder_type = cfg["encoders"].get("type", "identity")
-        if encoder_type == "identity":
-            encoders = nn.ModuleList([
-                IdentityEncoder(emb_dim=embedding_dim)
-                for _ in range(n_modalities)
-            ])
-        elif encoder_type == "residual_adapter":
-            encoders = nn.ModuleList([
-                ResidualAdapterEncoder(
-                    emb_dim=embedding_dim,
-                    hidden_dim=cfg["encoders"].get("adapter_hidden_dim", 256),
-                    dropout=cfg["encoders"].get("adapter_dropout", 0.0),
-                    residual_scale_init=cfg["encoders"].get("adapter_residual_scale_init", 1e-3),
-                    use_layernorm=cfg["encoders"].get("adapter_use_layernorm", True),
-                )
-                for _ in range(n_modalities)
-            ])
-        else:
-            raise ValueError(
-                f"Unsupported scm_pretrain encoder type={encoder_type!r}. "
-                "Expected 'identity' or 'residual_adapter'."
-            )
+        encoders = nn.ModuleList(
+            [IdentityEncoder(emb_dim=embedding_dim) for _ in range(n_modalities)]
+        )
         model = build_scorer_model(
             Contrastive_Model(encoders=encoders),
             max_modalities=n_modalities,
@@ -408,37 +299,13 @@ def build_model(cfg: dict):
         )
         return _finalize_learned_scorer(lightning_module, cfg)
 
-    # UKBB 
     if cfg["dataset_name"] == "ukb":
         input_dims_modalities = {
             "nmr": 249,
             "ehr": 3584,
-            "ehr_future": 3062,
-            "ehr_imaging": 4096,
             "olink": 1463,
-            "prs": 135,
-            "bloodbio": 30,
-            "baselinechars": 28,
-            "localenvironment": 33,
-            "arterialstiffness": 9,
-            "anthropometry": 43,
-            "bloodpressure": 12,
-            "ecgduringexercise": 355,
-            "eyemeasures": 310,
-            "bonedensitometry": 27,
-            "handgripstrength": 2,
-            "spirometry": 29,
-            "touchscreen": 119,
-            "cognitivefunction": 27,
-            "hearingtest": 68,
-            "verbalinterview": 224,
-            "bloodcount": 31,
-            "urineassays": 4,
-            "telomeres": 4,
-            "infectiousdiseases": 66,
         }
         modalities = cfg["encoders"]["modalities"]
-        input_dims_modalities = {k: v for k, v in input_dims_modalities.items() if k in modalities}
         encoders = nn.ModuleList([])
 
         for mod in modalities:
@@ -465,91 +332,6 @@ def build_model(cfg: dict):
             modelname=modelname,
             params_retrival_ds=params_retrival_ds,
             modalities=cfg["encoders"]["modalities"],
-        )
-        return _finalize_learned_scorer(lightning_module, cfg)
-    
-    # Synthetic XNOR
-    if cfg["dataset_name"] == "synthetic_xnor":
-        n_modalities = int(cfg["encoders"].get("n_modalities", 3))
-        feature_layout = cfg["encoders"].get("feature_layout", "1d")
-        input_layout = cfg["encoders"].get("input_layout", "1d")
-        if feature_layout != input_layout:
-            raise ValueError(
-                f"For synthetic_xnor, feature_layout ({feature_layout}) and input_layout ({input_layout}) must match."
-            )
-        if n_modalities == 2:
-            raise ValueError("Synthetic XNOR bimodal support was removed with the old CLIP objective.")
-
-        if n_modalities == 3:
-            sequence_encoder_params = cfg["encoders"].get("sequence_encoder_params", {})
-            sequence_encoder_params = dict(sequence_encoder_params)
-            sequence_encoder_params.setdefault("seq_len", cfg["encoders"].get("seq_len", 4))
-            encoders = nn.ModuleList([
-                SyntheticXNOREncoder(
-                    input_dim=cfg["encoders"]["input_dim"], 
-                    emb_dim=cfg["modelname"]["emb_dim"],
-                    input_layout=input_layout,
-                    sequence_encoder_params=sequence_encoder_params,
-                ),
-                SyntheticXNOREncoder(
-                    input_dim=cfg["encoders"]["input_dim"], 
-                    emb_dim=cfg["modelname"]["emb_dim"],
-                    input_layout=input_layout,
-                    sequence_encoder_params=sequence_encoder_params,
-                ),
-                SyntheticXNOREncoder(
-                    input_dim=cfg["encoders"]["input_dim"], 
-                    emb_dim=cfg["modelname"]["emb_dim"],
-                    input_layout=input_layout,
-                    sequence_encoder_params=sequence_encoder_params,
-                )
-            ])
-            model = build_scorer_model(Contrastive_Model(encoders=encoders))
-            lightning_module = SyntheticXNORModel(
-                params_optimizer=params_optimizer,
-                params_method=params_method,
-                model=model,
-                modelname=modelname,
-                params_retrival_ds=params_retrival_ds,
-            )
-            return _finalize_learned_scorer(lightning_module, cfg)
-
-        raise ValueError(f"Unsupported synthetic_xnor n_modalities={n_modalities}. Expected 2 or 3.")
-
-    # Symile XOR (synthetic)
-    if cfg["dataset_name"] == "symile_xor":
-        input_layout = cfg["encoders"].get("input_layout", "1d")
-        if input_layout != "1d":
-            raise ValueError("symile_xor currently supports only input_layout='1d'.")
-
-        encoders = nn.ModuleList([
-            SyntheticXNOREncoder(
-                input_dim=cfg["encoders"]["input_dim"],
-                emb_dim=cfg["modelname"]["emb_dim"],
-                input_layout=input_layout,
-                sequence_encoder_params=cfg["encoders"].get("sequence_encoder_params", {}),
-            ),
-            SyntheticXNOREncoder(
-                input_dim=cfg["encoders"]["input_dim"],
-                emb_dim=cfg["modelname"]["emb_dim"],
-                input_layout=input_layout,
-                sequence_encoder_params=cfg["encoders"].get("sequence_encoder_params", {}),
-            ),
-            SyntheticXNOREncoder(
-                input_dim=cfg["encoders"]["input_dim"],
-                emb_dim=cfg["modelname"]["emb_dim"],
-                input_layout=input_layout,
-                sequence_encoder_params=cfg["encoders"].get("sequence_encoder_params", {}),
-            ),
-        ])
-        model = build_scorer_model(Contrastive_Model(encoders=encoders))
-        lightning_module = SymileXORModel(
-            params_optimizer=params_optimizer,
-            params_method=params_method,
-            model=model,
-            modelname=modelname,
-            params_retrival_ds=params_retrival_ds,
-            candidate_idx=cfg["encoders"].get("candidate_idx", 1),
         )
         return _finalize_learned_scorer(lightning_module, cfg)
     
@@ -645,8 +427,6 @@ def build_model(cfg: dict):
 def build_datamodule(cfg: dict):
     from datasets.symile_mimic import Dataset_SymileMimic
     from lightningdatamodules.symile_mimic import DataModule_SymileMimic
-    from lightningdatamodules.synthetic_xnor import DataModule_SyntheticXNOR
-    from lightningdatamodules.synthetic_xor_symile import DataModule_SymileXOR
     from lightningdatamodules.mimic import DataModule_MIMIC
     from lightningdatamodules.inspect import INSPECTDataModule
     from lightningdatamodules.scm import DataModule_SCMPretrain
@@ -771,48 +551,6 @@ def build_datamodule(cfg: dict):
         from udm.general_datamodule import GeneralDatamodule
         datamodule_params = {key: value for key, value in cfg.datamodule.items()}
         return GeneralDatamodule(**datamodule_params)
-
-    # Synthetic XOR
-    if cfg["dataset_name"] == "synthetic_xnor":
-        n_modalities = int(cfg["encoders"].get("n_modalities", 3))
-        if n_modalities == 2:
-            raise ValueError("Synthetic XNOR bimodal support was removed with the old CLIP objective.")
-
-        if n_modalities != 3:
-            raise ValueError(f"Unsupported synthetic_xnor n_modalities={n_modalities}. Expected 2 or 3.")
-
-        return DataModule_SyntheticXNOR(
-            batch_size = cfg["batch_size"],
-            n_samples = cfg["encoders"]["n_samples"],
-            dims_modality = cfg["encoders"]["dims_modality"],
-            feature_layout = cfg["encoders"].get("feature_layout", "1d"),
-            seq_len = cfg["encoders"].get("seq_len", 4),
-            n_bits = cfg["encoders"]["n_bits"],
-            embed_mode = cfg["encoders"].get("embed_mode", "xnor_only"),
-            bc_corr_exclusive = cfg["encoders"].get("bc_corr_exclusive", False),
-            bc_corr_p = cfg["encoders"].get("bc_corr_p", None),
-            bc_corr_split = cfg["encoders"].get("bc_corr_split", 0.5),
-            p_flips = cfg["encoders"]["p_flips"],
-            p_corrs = cfg["encoders"]["p_corrs"],
-            corr_modes = cfg["encoders"]["corr_modes"],
-            signal_scale = cfg["encoders"]["signal_scale"],
-            distractor_std = cfg["encoders"]["distractor_std"],
-            a_rule = cfg["encoders"]["a_rule"],
-            seed = cfg["seed"],
-        )
-
-    # Symile XOR (synthetic)
-    if cfg["dataset_name"] == "symile_xor":
-        return DataModule_SymileXOR(
-            batch_size=cfg["batch_size"],
-            n_samples=cfg["encoders"]["n_samples"],
-            p=cfg["encoders"]["p"],
-            value_mode=cfg["encoders"].get("value_mode", "zero_one"),
-            dim=cfg["encoders"]["dim"],
-            signal_scale=cfg["encoders"].get("signal_scale", 1.0),
-            distractor_std=cfg["encoders"].get("distractor_std", 0.0),
-            seed=cfg["seed"],
-        )
 
     # MIMIC (new trimodal variant)
     if cfg["dataset_name"] == "mimic":

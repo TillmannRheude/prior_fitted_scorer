@@ -1,16 +1,16 @@
 defaults:
   - _self_
-  - datamodule: default  # default / inspect / scm_pretrain
-  - encoders: ukb  # inspect / symile_mimic / mimic / ukb / synthetic_xnor / symile_xor / scm
-  - modelname: transformer  # transformer / mlp / symile / clip / triangle / gram
+  - datamodule: default
+  - encoders: ukb
+  - modelname: transformer
 
-dataset_name: ukb  # inspect / symile_mimic / mimic / ukb / synthetic_xnor / symile_xor / scm_pretrain
+dataset_name: ukb
 batch_size: 128
 split_nr: 1
 devices: 1
 
 optimizer:
-  name: schedulefree_adamw  # 
+  name: schedulefree_adamw
   lr: 3e-4
   warmup_steps: 10
   weight_decay: 1e-4
@@ -19,7 +19,7 @@ optimizer:
 
 seed: 420
 
-precision: "bf16"  # "32"
+precision: "bf16"
 max_epochs: 25
 limit_train_batches: 1.0
 patience: 5
@@ -32,4 +32,4 @@ wandb:
   group: None
 
 ckpt_dir: "checkpoints"
-ckpt_name: None  # transformer_ukb
+ckpt_name: None

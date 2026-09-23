@@ -13,15 +13,8 @@ transformer_params:
   nhead: 2
   num_layers: 5
   dropout: 0.0
-  num_register_tokens: 0
-  use_sigmoid_attention: false
-  use_sinusoidal_pe: false
-  use_final_cls_norm: false
   disable_flash_mem_efficient_sdp: true
-  initialization: xavier  # xavier / kaiming / mimetic
-  freeze_attention: false
-  freeze_ffn: false
-  attention_replacement: standard  # standard / identity / uniform / fixed_cross_modal
+  initialization: xavier
   mimetic_alpha1: 0.7
   mimetic_beta1: 0.7
   mimetic_alpha2: 0.4
@@ -31,10 +24,8 @@ pair_num_negatives: 128
 scorer_lr: null
 scorer_warmup_start_epoch: 0
 scorer_warmup_epochs: 0
-scorer_warmup_curve: cosine  # cosine / linear / constant
+scorer_warmup_curve: cosine
 freeze_scorer: true
-compile_scorer: false
-compile_scorer_mode: default  # default / reduce-overhead / max-autotune
 
 pretrained_scorer_ckpt: null
 pretrained_scorer_strict: true

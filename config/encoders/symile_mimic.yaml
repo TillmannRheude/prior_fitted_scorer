@@ -6,23 +6,12 @@ monitor:
   mode: "max"
 
 cxr:
-  type: "resnet"  # resnet / transformer
+  type: "resnet"
   weights: null
-  norm_type: "batchnorm"
-  # Transformer CXR encoder options, used when type="transformer".
-  vit: "vit_b_16"
-  dropout: 0.1
-  image_size: 224
-  in_channels: 3
 
 ecg:
-  type: "resnet"  # resnet / mlp
+  type: "resnet"
   weights: null
-  norm_type: "batchnorm"
-  # SimBaMM-style ECG MLP options, used when type="mlp".
-  input_dim: 60000
-  hidden_dims: [1024, 2048, 1024]
-  hidden_dropouts: [0.2, 0.2, 0.2]
 
 candidate_idx: 0
 retrieval_mode: "preselected"
