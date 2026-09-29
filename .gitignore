@@ -29,3 +29,4 @@ config/datamodule
 scripts
 sweeps
 test_ckpt
+ukb_audit_reports
