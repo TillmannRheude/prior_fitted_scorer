@@ -23,6 +23,7 @@ scorer = TransformerScorer(
         "nhead": 2,
         "num_layers": 2,
         "dropout": 0.0,
+        "disable_flash_mem_efficient_sdp": False,
         "initialization": "xavier",
     },
     input_dim=embedding_dim,
@@ -82,7 +83,28 @@ loss = pair_sampled_loss(scorer, embeddings, num_negatives=16)
 loss.backward()  # gradients pass through the frozen scorer into the encoders
 ```
 
-To use an prior-fitted scorer (PFS): TODO
+To use the prior-fitted scorer (PFS) without Lightning, construct the architecture
+used for SCM pretraining and load the tensor-only state dictionary:
+
+```python
+pfs = TransformerScorer(
+    transformer_params={
+        "d_model": 512,
+        "nhead": 2,
+        "num_layers": 5,
+        "dropout": 0.0
+    },
+    input_dim=128,
+    max_modalities=3,
+    proj_output_dim=1,
+)
+state_dict = torch.load(
+    "pfs.pt",
+    weights_only=True,
+)
+pfs.load_state_dict(state_dict, strict=True)
+pfs.requires_grad_(False)
+```
 
 ## Citation
 If you find this work useful, please cite:
