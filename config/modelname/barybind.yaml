@@ -1,0 +1,33 @@
+modelname: barybind
+
+emb_dim: 128
+
+negative_sampling: n_squared
+candidate_dependent: true
+logit_scale_init: 0.0
+embedding_norm: true
+bias_init_mult: 1.0
+pair_num_negatives: 128
+
+barybind_params:
+  map_hidden_dim: 256
+  potential_hidden_dim: 128
+  dam_hidden_dim: 128
+  dam_num_heads: 2
+  alpha_mwb: 1.0
+  alpha_bvc: 1.0
+  alpha_dam: 0.1
+  bvc_label_smoothing: 0.1
+  potential_constraint_weight: 10.0
+  potential_lr_multiplier: 2.0
+  volume_eps: 0.0
+
+scorer_lr: null
+scorer_warmup_start_epoch: 0
+scorer_warmup_epochs: 0
+scorer_warmup_curve: cosine
+freeze_scorer: false
+
+pretrained_scorer_ckpt: null
+pretrained_scorer_strict: true
+pretrained_load_logit_scale: false

@@ -92,7 +92,9 @@ pfs = TransformerScorer(
         "d_model": 512,
         "nhead": 2,
         "num_layers": 5,
-        "dropout": 0.0
+        "dropout": 0.0,
+        "disable_flash_mem_efficient_sdp": False,
+        "initialization": "xavier",
     },
     input_dim=128,
     max_modalities=3,

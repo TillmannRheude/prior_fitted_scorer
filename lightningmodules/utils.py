@@ -16,7 +16,7 @@ from losses.gram import gram
 from losses.symile import symile
 from losses.triangle import triangle
 
-LEARNED_SCORERS = {"transformer", "mlp"}
+LEARNED_SCORERS = {"transformer", "mlp", "barybind"}
 
 
 class LightningModuleParent(pl.LightningModule):
@@ -49,6 +49,8 @@ class LightningModuleParent(pl.LightningModule):
         self.modelname = modelname
         self._scorer_lr_group_name = "transformer_scorer"
         self._last_logged_scorer_lr_multiplier = None
+        if self.modelname == "barybind":
+            self.automatic_optimization = False
 
         # Walltime logging (disabled only if explicitly turned off).
         # Logged as epoch-mean `train/step_walltime_s` every `step_walltime_every` batches.
@@ -97,7 +99,8 @@ class LightningModuleParent(pl.LightningModule):
         else:
             raise ValueError(
                 f"Unsupported modelname={modelname!r}. Expected one of "
-                "['transformer', 'mlp', 'symile', 'clip', 'triangle', 'gram']."
+                "['transformer', 'mlp', 'barybind', 'symile', 'clip', "
+                "'triangle', 'gram']."
             )
 
         self.save_hyperparameters()
@@ -135,7 +138,46 @@ class LightningModuleParent(pl.LightningModule):
             # embeddings = [nn.functional.normalize(emb, dim=1) for emb in embeddings]
             embeddings = [nn.functional.normalize(emb, dim=-1) for emb in embeddings]
         
-        if self.modelname not in LEARNED_SCORERS:
+        if self.modelname == "barybind":
+            objective_embeddings = embeddings
+            objective_missing = modality_missing_mask
+            if (
+                set == "train"
+                and dist.is_available()
+                and dist.is_initialized()
+                and dist.get_world_size() > 1
+            ):
+                objective_embeddings = [
+                    self._all_gather_with_grad(embedding)
+                    for embedding in embeddings
+                ]
+                if modality_missing_mask is not None:
+                    objective_missing = self._all_gather_without_grad(
+                        modality_missing_mask
+                    )
+
+            barybind_losses = self.model.scorer.compute_losses(
+                objective_embeddings,
+                missing=objective_missing,
+                logit_scale=logit_scale_exp,
+            )
+            loss = barybind_losses.loss
+            self._barybind_potential_loss = barybind_losses.potential_loss
+            for name, value in (
+                ("mwb", barybind_losses.mwb),
+                ("bvc", barybind_losses.bvc),
+                ("dam", barybind_losses.dam),
+                ("potential", barybind_losses.potential_loss),
+            ):
+                self.log(
+                    f"{set}/loss_{name}",
+                    value,
+                    on_step=True,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
+
+        elif self.modelname not in LEARNED_SCORERS:
             loss = self._analytic_objective_loss(embeddings, set=set, logit_scale_exp=logit_scale_exp)
 
         # DDP for global-batch learned scorer (candidate-dependent).
@@ -538,6 +580,31 @@ class LightningModuleParent(pl.LightningModule):
         return sum(losses) / len(losses)
 
     def training_step(self, batch, batch_idx):
+        if self.modelname == "barybind":
+            main_optimizer, potential_optimizer = self.optimizers()
+            main_optimizer.zero_grad()
+            potential_optimizer.zero_grad()
+
+            loss = self.shared_step(batch, "train")
+            potential_loss = self._barybind_potential_loss
+
+            self.manual_backward(loss)
+            self.clip_gradients(
+                main_optimizer,
+                gradient_clip_val=1.0,
+                gradient_clip_algorithm="norm",
+            )
+            main_optimizer.step()
+
+            potential_optimizer.zero_grad()
+            self.manual_backward(potential_loss)
+            self.clip_gradients(
+                potential_optimizer,
+                gradient_clip_val=1.0,
+                gradient_clip_algorithm="norm",
+            )
+            potential_optimizer.step()
+            return loss.detach()
         if self.automatic_optimization:
             return self.shared_step(batch, "train")
 
@@ -948,16 +1015,79 @@ class LightningModuleParent(pl.LightningModule):
             return_optim: bool = False
     ) -> None: 
         optim = self.optimizers()
+        optimizers = optim if isinstance(optim, (list, tuple)) else [optim]
         
-        if mode == "train" and "schedulefree" in self.params_optimizer["name"]:
-            optim.train()  
-        elif mode == "eval" and "schedulefree" in self.params_optimizer["name"]:
-            optim.eval()
+        if "schedulefree" in self.params_optimizer["name"]:
+            for optimizer in optimizers:
+                method = getattr(optimizer, mode, None)
+                if method is not None:
+                    method()
         
         if return_optim:
             return optim
 
     def configure_optimizers(self):
+        if self.modelname == "barybind":
+            potential_parameters = list(self.model.scorer.potentials.parameters())
+            potential_parameter_ids = {
+                id(parameter) for parameter in potential_parameters
+            }
+            main_parameters = [
+                parameter
+                for parameter in self.parameters()
+                if parameter.requires_grad
+                and id(parameter) not in potential_parameter_ids
+            ]
+            main_group = {
+                "params": main_parameters,
+                "lr": self.params_optimizer["lr"],
+                "weight_decay": self.params_optimizer["weight_decay"],
+            }
+            optimizer_name = self.params_optimizer["name"]
+            if optimizer_name == "schedulefree_adamw":
+                main_optimizer = schedulefree.AdamWScheduleFree(
+                    [main_group],
+                    eps=self.params_optimizer["eps"],
+                    warmup_steps=self.params_optimizer["warmup_steps"],
+                    betas=self.params_optimizer["betas"],
+                )
+            elif optimizer_name == "schedulefree_sgd":
+                main_optimizer = schedulefree.SGDScheduleFree(
+                    [main_group],
+                    lr=self.params_optimizer["lr"],
+                    weight_decay=self.params_optimizer["weight_decay"],
+                    momentum=self.params_optimizer["momentum"],
+                    warmup_steps=self.params_optimizer["warmup_steps"],
+                )
+            elif optimizer_name == "sgd":
+                main_optimizer = torch.optim.SGD(
+                    [main_group],
+                    lr=self.params_optimizer["lr"],
+                    weight_decay=self.params_optimizer["weight_decay"],
+                )
+            elif optimizer_name == "adamw":
+                main_optimizer = torch.optim.AdamW(
+                    [main_group],
+                    lr=self.params_optimizer["lr"],
+                    weight_decay=self.params_optimizer["weight_decay"],
+                    eps=self.params_optimizer["eps"],
+                    betas=self.params_optimizer["betas"],
+                )
+            else:
+                raise ValueError(f"Optimizer {optimizer_name} not supported.")
+
+            potential_optimizer = torch.optim.AdamW(
+                potential_parameters,
+                lr=(
+                    self.params_optimizer["lr"]
+                    * float(self.params_optimizer["potential_lr_multiplier"])
+                ),
+                weight_decay=self.params_optimizer["weight_decay"],
+                eps=self.params_optimizer["eps"],
+                betas=self.params_optimizer["betas"],
+            )
+            return [main_optimizer, potential_optimizer]
+
         scorer_lr = self.params_optimizer.get("scorer_lr", None)
         if scorer_lr in [None, "None", "null", ""]:
             param_groups = [

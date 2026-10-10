@@ -88,7 +88,9 @@ def main(cfg) -> None:
         callbacks=callbacks,
         log_every_n_steps=1,
         plugins=[LightningEnvironment()],
-        gradient_clip_val=1.0,
+        gradient_clip_val=(
+            None if cfg["modelname"]["modelname"] == "barybind" else 1.0
+        ),
         gradient_clip_algorithm="norm",
         sync_batchnorm=cfg["devices"] > 1,
     )

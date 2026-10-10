@@ -80,9 +80,9 @@ def _maybe_load_pretrained_scorer(lightning_module, cfg: dict):
     if checkpoint_path in [None, "None", "null", ""]:
         return lightning_module
 
-    if cfg["modelname"]["modelname"] not in {"transformer", "mlp"}:
+    if cfg["modelname"]["modelname"] not in {"transformer", "mlp", "barybind"}:
         raise ValueError(
-            "pretrained_scorer_ckpt requires modelname='transformer' or 'mlp'."
+            "pretrained_scorer_ckpt requires a learned scorer."
         )
 
     scorer = _get_scorer(lightning_module)
@@ -142,6 +142,11 @@ def _maybe_freeze_scorer(lightning_module, cfg: dict):
     """Freeze learned scorer weights when modelname.freeze_scorer=true."""
     if not _as_bool(cfg.get("modelname", {}).get("freeze_scorer", False)):
         return lightning_module
+    if cfg["modelname"]["modelname"] == "barybind":
+        raise ValueError(
+            "BaryBind jointly trains its WB maps, potentials, and matching head; "
+            "freeze_scorer is therefore unsupported."
+        )
 
     scorer = _get_scorer(lightning_module)
     if scorer is None:
@@ -162,6 +167,7 @@ def _finalize_learned_scorer(lightning_module, cfg: dict):
 
 def build_model(cfg: dict):
     from architecture import Contrastive_Model, MLPScorer_Model, TransformerScorer_Model
+    from losses.barybind import BaryBindModel
     from encoders import (
         CXREncoder,
         ECGEncoder,
@@ -190,6 +196,9 @@ def build_model(cfg: dict):
         "scorer_warmup_start_epoch": cfg["modelname"].get("scorer_warmup_start_epoch", 0),
         "scorer_warmup_epochs": cfg["modelname"].get("scorer_warmup_epochs", 0),
         "scorer_warmup_curve": cfg["modelname"].get("scorer_warmup_curve", "cosine"),
+        "potential_lr_multiplier": cfg["modelname"].get(
+            "barybind_params", {}
+        ).get("potential_lr_multiplier", 2.0),
     }
     params_method = {
         "modelname": cfg["modelname"]["modelname"],
@@ -223,6 +232,19 @@ def build_model(cfg: dict):
     modelname = cfg["modelname"]["modelname"]
 
     def build_scorer_model(contrastive_model, max_modalities=3):
+        if modelname == "barybind":
+            if max_modalities != 3:
+                raise ValueError("BaryBind currently supports exactly three modalities.")
+            barybind_params = dict(
+                cfg["modelname"].get("barybind_params", {})
+            )
+            barybind_params["retrieval_anchor_idx"] = int(
+                cfg.get("encoders", {}).get("candidate_idx", 0)
+            )
+            return BaryBindModel(
+                contrastive_model=contrastive_model,
+                params=barybind_params,
+            )
         if modelname == "transformer":
             return TransformerScorer_Model(
                 contrastive_model=contrastive_model,
@@ -243,6 +265,11 @@ def build_model(cfg: dict):
 
     # SCM scorer-only pretraining
     if cfg["dataset_name"] == "scm_pretrain":
+        if modelname == "barybind":
+            raise ValueError(
+                "BaryBind is an end-to-end real-data objective and is not "
+                "supported by the scorer-only SCM pretraining pipeline."
+            )
         n_modalities = int(cfg["encoders"].get("n_modalities", 3))
         if n_modalities != 3:
             raise ValueError("scm_pretrain currently supports exactly three modalities.")
