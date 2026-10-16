@@ -111,11 +111,15 @@ pfs.requires_grad_(False)
 ## Citation
 If you find this work useful, please cite:
 ```bibtex
-@unpublished{Rheude_Eils_Wild_2026,
-  title={Prior-Fitted and Frozen Scorers for Multimodal Contrastive Learning},
-  author={Tillmann Rheude and Roland Eils and Benjamin Wild},
-  year={2026},
-  archivePrefix={arXiv},
-  primaryClass={cs.LG}
+@unpublished{Rheude_Eils_Wild_2026, 
+    title={Prior-Fitted and Frozen Scorers for Multimodal Contrastive Learning}, 
+    url={http://arxiv.org/abs/2610.14770}, 
+    DOI={10.48550/arXiv.2610.14770}, 
+    note={arXiv:2610.14770 [cs.LG]}, 
+    number={arXiv:2610.14770}, 
+    publisher={arXiv}, 
+    author={Rheude, Tillmann and Eils, Roland and Wild, Benjamin}, 
+    year={2026}, 
+    month=oct
 }
 ```
